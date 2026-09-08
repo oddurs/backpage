@@ -7,4 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Frame composition: titled panels stacked into a fixed character grid, with
+  truncation and padding that keep every line exactly the frame width.
+- `backpage` CLI rendering one frame to stdout, with `--width`, `--height`,
+  `--help`, and `--version`.
+
 [unreleased]: https://github.com/oddurs/backpage/commits/main
