@@ -158,6 +158,16 @@ cmd_done() {
 	cd "$root"
 	git worktree remove --force "$dir"
 	git branch -D "$branch" >/dev/null
+
+	# A nested branch name like fix/foo leaves an empty parent directory behind.
+	# rmdir refuses non-empty directories, so this stops at the first one that
+	# still holds another worktree.
+	parent=$(dirname -- "$dir")
+	stop=$(worktree_root)
+	while [ "$parent" != "$stop" ] && [ "$parent" != "/" ]; do
+		rmdir "$parent" 2>/dev/null || break
+		parent=$(dirname -- "$parent")
+	done
 	git worktree prune
 	git fetch --quiet --prune origin
 	git -C "$root" pull --quiet --ff-only

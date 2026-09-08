@@ -40,7 +40,11 @@ scripts/setup
 cargo build --release
 ```
 
-The binary lands at `target/release/backpage`.
+The binary lands at `target/release/backpage`. To put it on your `PATH`:
+
+```sh
+cargo install --path .
+```
 
 ## Usage
 
