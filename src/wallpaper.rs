@@ -5,7 +5,8 @@
 
 use std::fmt;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 /// Why the desktop picture could not be read or written.
 #[derive(Debug)]
@@ -16,6 +17,8 @@ pub enum WallpaperError {
     Script(String),
     /// The path could not be expressed as text for `AppleScript`.
     Path,
+    /// `osascript` did not finish in time, which a locked display causes.
+    TimedOut,
 }
 
 impl fmt::Display for WallpaperError {
@@ -26,6 +29,11 @@ impl fmt::Display for WallpaperError {
                 write!(f, "osascript failed: {}", msg.trim())
             }
             Self::Path => write!(f, "path is not valid UTF-8"),
+            Self::TimedOut => write!(
+                f,
+                "osascript timed out after {}s; is the display locked?",
+                SCRIPT_TIMEOUT.as_secs()
+            ),
         }
     }
 }
@@ -33,12 +41,35 @@ impl fmt::Display for WallpaperError {
 impl std::error::Error for WallpaperError {}
 
 /// Runs one `AppleScript` statement and returns its trimmed output.
+/// How long to wait for `osascript` before giving up on it.
+///
+/// A locked or sleeping display leaves the `AppleEvent` pending, and without a
+/// bound the process would sit there rather than trying again next tick.
+const SCRIPT_TIMEOUT: Duration = Duration::from_secs(20);
+
 fn osascript(script: &str) -> Result<String, WallpaperError> {
-    let out = Command::new("osascript")
+    let mut child = Command::new("osascript")
         .arg("-e")
         .arg(script)
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(WallpaperError::Spawn)?;
+
+    let deadline = Instant::now() + SCRIPT_TIMEOUT;
+    loop {
+        match child.try_wait().map_err(WallpaperError::Spawn)? {
+            Some(_) => break,
+            None if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(WallpaperError::TimedOut);
+            }
+            None => std::thread::sleep(Duration::from_millis(100)),
+        }
+    }
+
+    let out = child.wait_with_output().map_err(WallpaperError::Spawn)?;
     if !out.status.success() {
         return Err(WallpaperError::Script(
             String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -153,6 +184,12 @@ mod tests {
     fn a_malformed_resolution_is_not_half_parsed() {
         assert_eq!(parse_resolution("Resolution: wide x tall\n"), None);
         assert_eq!(parse_resolution("Resolution: 1920\n"), None);
+    }
+
+    #[test]
+    fn the_timeout_error_names_the_likely_cause() {
+        let msg = WallpaperError::TimedOut.to_string();
+        assert!(msg.contains("display locked"), "{msg}");
     }
 
     #[test]

@@ -90,14 +90,27 @@ fn run(cfg: &Config, to_desktop: bool) -> ExitCode {
 
     let mut tick: u32 = 0;
     loop {
-        if let Err(err) = once(cfg, &renderer, to_desktop, tick) {
-            eprintln!("backpage: {err}");
-            return ExitCode::FAILURE;
-        }
+        let result = once(cfg, &renderer, to_desktop, tick);
+
         let Some(secs) = cfg.interval else {
-            return ExitCode::SUCCESS;
+            return match result {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(err) => {
+                    eprintln!("backpage: {err}");
+                    ExitCode::FAILURE
+                }
+            };
         };
-        tick = tick.wrapping_add(1);
+
+        // Running on an interval, a failure is usually transient: the display
+        // is asleep, or the sample took too long. Report it and try again on
+        // the next tick rather than exiting, which under launchd's KeepAlive
+        // would spin the process rather than wait.
+        if let Err(err) = result {
+            eprintln!("backpage: {err}");
+        } else {
+            tick = tick.wrapping_add(1);
+        }
         std::thread::sleep(Duration::from_secs(secs));
     }
 }
