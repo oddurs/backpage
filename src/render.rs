@@ -36,6 +36,18 @@ impl Panel {
         self.rows.len() + 2
     }
 
+    /// Width needed to show the title and every row without truncation.
+    #[must_use]
+    pub fn natural_width(&self) -> usize {
+        let widest = self
+            .rows
+            .iter()
+            .map(|r| r.chars().count())
+            .chain([self.title.chars().count()])
+            .max();
+        widest.unwrap_or(0) + BORDER_COST
+    }
+
     /// Renders the panel as `width`-wide lines.
     ///
     /// Titles and rows longer than the available space are truncated with an
@@ -162,6 +174,26 @@ mod tests {
     fn long_titles_are_truncated_too() {
         let lines = Panel::new("a-very-long-title", vec![]).render(MIN_WIDTH);
         assert_eq!(widths(&lines), vec![MIN_WIDTH; 2]);
+    }
+
+    #[test]
+    fn natural_width_covers_the_widest_row_plus_the_border() {
+        let panel = Panel::new("t", vec!["abc".into(), "abcdefgh".into()]);
+        assert_eq!(panel.natural_width(), 8 + BORDER_COST);
+    }
+
+    #[test]
+    fn natural_width_accounts_for_a_title_wider_than_every_row() {
+        let panel = Panel::new("a-long-title", vec!["x".into()]);
+        assert_eq!(panel.natural_width(), "a-long-title".len() + BORDER_COST);
+    }
+
+    #[test]
+    fn rendering_at_the_natural_width_truncates_nothing() {
+        let panel = Panel::new("t", vec!["abcdefgh".into()]);
+        let lines = panel.render(panel.natural_width());
+        assert!(lines[1].contains("abcdefgh"), "got {:?}", lines[1]);
+        assert!(!lines[1].contains('\u{2026}'));
     }
 
     #[test]

@@ -12,24 +12,31 @@ stealing focus.
 
 ## Status
 
-Early. What works today:
+Early, but it does the thing. What works today:
 
-- Composing a dashboard frame from titled panels, at any size, with truncation
-  and padding that keep every line exactly the frame width.
-- A CLI that renders one frame to stdout.
+- Reading a sample from [poptop](https://github.com/oddurs/poptop) via its
+  `--once` mode, dropping the figures the platform does not publish.
+- Composing that into panels, rasterising them to a PNG with a system
+  monospace font, and setting it as the desktop picture.
+- Sizing the type to fill the display and centring the result, so the dashboard
+  fits whatever screen it lands on.
+- Repainting on an interval.
 
 What does not exist yet:
 
-- Writing the frame to the desktop picture.
-- Any real data source — the panel contents are placeholders.
-- A daemon, a refresh loop, or multi-display support.
-
-The roadmap below is a statement of intent, not of current behaviour.
+- Any data source other than poptop.
+- Multi-display and per-space pictures — every desktop gets the same picture.
+- A config file. Everything is flags.
 
 ## Requirements
 
 - macOS on Apple silicon
 - Rust 1.98 or newer (the toolchain is pinned in `rust-toolchain.toml`)
+- [poptop](https://github.com/oddurs/poptop) on `PATH`, or pointed at with
+  `--source`
+
+The first run asks for permission to control System Events, which is how the
+desktop picture gets set. Granting it once is enough.
 
 ## Install
 
@@ -49,30 +56,53 @@ cargo install --path .
 ## Usage
 
 ```sh
-backpage                              # render an 80x24 frame to stdout
-backpage --width 120 --height 40      # render at a specific size
+backpage                      # paint the desktop once and exit
+backpage --interval 10        # repaint every 10 seconds
+backpage --stdout             # print the frame instead of painting
 backpage --help
-backpage --version
 ```
 
+`--stdout` is the quickest way to see what will be drawn:
+
 ```
-$ backpage --width 40 --height 4
-┌ backpage ────────────────────────────┐
-│ no data sources configured           │
-│ run `backpage --help` for usage      │
-└──────────────────────────────────────┘
+$ backpage --stdout --cols 92 --rows 9
+┌ system ──────────────────────────────────────────────────────────────────────────────────┐
+│ cpu     38.0%  (14 cores)                                                                │
+│ fs      91.7%  / full, 38.3G of 460.4G available                                         │
+│ mem     83.0%  19.9G / 24.0G used, 10.1G available                                       │
+│ swap    65.4%  2.6G / 4.0G                                                               │
+│ load    4.13 5.20 5.60                                                                   │
+│ procs   601                                                                              │
+│ io     173/601 processes unreadable — run as root to see them                            │
+└──────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Any height beyond what the panels need is padded with blank rows, so the frame
-is always exactly the size you asked for.
+By default the type is sized to fill the display and the block is centred.
+`--size`, `--cols` and `--rows` override that; `--bg` and `--fg` take
+`#rrggbb`.
+
+### Keeping it up to date
+
+Run it on an interval under launchd, so it survives logout and restarts:
+
+```sh
+cp contrib/com.oddurs.backpage.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.oddurs.backpage.plist
+```
+
+To stop it, and put your own picture back:
+
+```sh
+launchctl unload ~/Library/LaunchAgents/com.oddurs.backpage.plist
+osascript -e 'tell application "System Events" to set picture of every desktop to "/path/to/your.png"'
+```
 
 ## Roadmap
 
-1. Render a frame to a PNG and set it as the desktop picture.
-2. A refresh loop with a configurable interval.
-3. Data sources: system load, battery, calendar, git status.
-4. Multi-display and per-space wallpapers.
-5. A config file describing which panels appear where.
+1. More data sources — battery, calendar, git status — alongside poptop.
+2. Multi-display and per-space pictures.
+3. A config file describing which panels appear where.
+4. Redrawing only when the sample actually changed.
 
 ## Development
 

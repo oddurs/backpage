@@ -13,6 +13,8 @@ keywords = ["macos", "wallpaper", "dashboard", "tui", "cli"]
 categories = ["command-line-utilities"]
 
 [dependencies]
+ab_glyph = "0.2.32"
+png = "0.18.1"
 
 [lints.rust]
 unsafe_code = "forbid"

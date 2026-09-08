@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.oddurs.backpage</string>
+
+  <!-- Adjust these two paths to where the binaries actually live. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/backpage</string>
+    <string>--interval</string>
+    <string>10</string>
+    <string>--source</string>
+    <string>/usr/local/bin/poptop</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/backpage.err</string>
+</dict>
+</plist>
