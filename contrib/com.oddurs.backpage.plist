@@ -20,8 +20,12 @@
   <true/>
   <key>KeepAlive</key>
   <true/>
-  <key>ProcessType</key>
-  <string>Background</string>
+  <!-- Must run inside the GUI session. Setting the desktop picture goes
+       through System Events, which refuses a background context with
+       "Connection is invalid (-609)". Load it with:
+         launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.oddurs.backpage.plist -->
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
   <key>StandardErrorPath</key>
   <string>/tmp/backpage.err</string>
 </dict>

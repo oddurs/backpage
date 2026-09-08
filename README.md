@@ -87,13 +87,19 @@ Run it on an interval under launchd, so it survives logout and restarts:
 
 ```sh
 cp contrib/com.oddurs.backpage.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.oddurs.backpage.plist
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.oddurs.backpage.plist
 ```
+
+It must be bootstrapped into the `gui/` domain. Setting the desktop picture
+goes through System Events, which refuses a background context with
+`Connection is invalid (-609)`. While the display is locked or asleep the
+`AppleEvent` cannot complete either — backpage reports the timeout and retries
+on the next tick rather than exiting.
 
 To stop it, and put your own picture back:
 
 ```sh
-launchctl unload ~/Library/LaunchAgents/com.oddurs.backpage.plist
+launchctl bootout "gui/$(id -u)/com.oddurs.backpage"
 osascript -e 'tell application "System Events" to set picture of every desktop to "/path/to/your.png"'
 ```
 
