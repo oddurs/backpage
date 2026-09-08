@@ -1,0 +1,40 @@
+#!/bin/sh
+# Enforce Conventional Commits and the attribution ban.
+set -eu
+
+msg_file=$1
+# Drop comment lines git adds to the editor buffer.
+body=$(grep -v '^#' "$msg_file" || true)
+subject=$(printf '%s\n' "$body" | sed '/^[[:space:]]*$/d' | head -1)
+
+fail() {
+	printf '\033[31mcommit-msg\033[0m %s\n' "$1" >&2
+	shift
+	[ "$#" -gt 0 ] && printf '  %s\n' "$@" >&2
+	exit 1
+}
+
+[ -n "$subject" ] || fail "empty commit message"
+
+case "$subject" in
+Merge* | Revert* | fixup!* | squash!*) exit 0 ;;
+esac
+
+printf '%s' "$subject" |
+	grep -Eq '^(feat|fix|chore|docs|perf|refactor|test|build|ci|style|revert)(\([a-z0-9._/-]+\))?!?: .+' ||
+	fail "subject is not a Conventional Commit" \
+		"got:      $subject" \
+		"expected: type(scope)!: imperative summary" \
+		"types:    feat fix chore docs perf refactor test build ci style revert"
+
+[ "${#subject}" -le 72 ] ||
+	fail "subject is ${#subject} characters; keep it to 72"
+
+case "$subject" in
+*.) fail "subject must not end with a period" ;;
+esac
+
+if printf '%s' "$body" |
+	grep -Eiq 'co-authored-by:[[:space:]]*(claude|anthropic)|generated with|claude code|written by (an )?ai|🤖'; then
+	fail "commit message contains attribution; remove it"
+fi

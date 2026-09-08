@@ -1,0 +1,28 @@
+[package]
+name = "backpage"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+description = "Turn the macOS desktop wallpaper into a read-only TUI dashboard"
+authors = ["Oddur Sigurdsson <oddurs@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/oddurs/backpage"
+homepage = "https://github.com/oddurs/backpage"
+readme = "README.md"
+keywords = ["macos", "wallpaper", "dashboard", "tui", "cli"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

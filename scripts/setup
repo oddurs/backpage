@@ -1,0 +1,16 @@
+#!/bin/sh
+# One-time setup for a fresh clone. Safe to re-run.
+set -eu
+
+cd "$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
+
+git config core.hooksPath .githooks
+printf 'hooks       -> .githooks\n'
+
+chmod +x scripts/task scripts/agent scripts/setup .githooks/*
+printf 'permissions -> ok\n'
+
+cargo fetch --locked
+printf 'deps        -> fetched\n'
+
+printf '\nready. run: scripts/task check\n'

@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Install shellcheck
+        run: command -v shellcheck || brew install shellcheck
+
+      - run: scripts/task check
+
+      - name: Build the release binary
+        run: |
+          cargo build --release --locked
+          tar -czf "backpage-${GITHUB_REF_NAME}-aarch64-apple-darwin.tar.gz" \
+            -C target/release backpage
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag \
+            ./*.tar.gz

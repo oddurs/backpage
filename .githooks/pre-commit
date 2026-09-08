@@ -1,0 +1,10 @@
+#!/bin/sh
+# Fast checks only. Anything slower belongs in pre-push.
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+"$root/scripts/task" fmt:check || {
+	printf '\033[31mpre-commit\033[0m formatting drift; run: scripts/task fmt\n' >&2
+	exit 1
+}
+"$root/scripts/task" lint

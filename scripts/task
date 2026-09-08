@@ -1,0 +1,46 @@
+#!/bin/sh
+# The single seam between this project and its automation.
+# CI, git hooks, and scripts/agent call only these targets — never cargo
+# directly — so local checks and CI can never drift apart.
+set -eu
+
+cd "$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)"
+
+usage() {
+	cat >&2 <<'USAGE'
+usage: scripts/task <target>
+
+  fmt        format in place
+  fmt:check  verify formatting, non-zero on drift
+  lint       clippy and shellcheck, warnings are errors
+  test       full test suite
+  build      compile
+  check      fmt:check && lint && test && build
+USAGE
+}
+
+case "${1:-}" in
+fmt) cargo fmt --all ;;
+fmt:check) cargo fmt --all -- --check ;;
+lint)
+	cargo clippy --all-targets --all-features --locked -- -D warnings
+	if ! command -v shellcheck >/dev/null 2>&1; then
+		printf 'shellcheck not found; install it with: brew install shellcheck\n' >&2
+		exit 1
+	fi
+	shellcheck -s sh scripts/task scripts/setup scripts/agent .githooks/*
+	;;
+test) cargo test --all-features --locked ;;
+build) cargo build --locked ;;
+check)
+	for target in fmt:check lint test build; do
+		printf '\033[1m==> %s\033[0m\n' "$target"
+		"$0" "$target"
+	done
+	printf '\033[32mall checks passed\033[0m\n'
+	;;
+*)
+	usage
+	exit 2
+	;;
+esac

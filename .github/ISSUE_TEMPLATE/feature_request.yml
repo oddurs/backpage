@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest something backpage should do
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        backpage is a *read-only* dashboard. Anything that accepts input, steals
+        focus, or makes the desktop interactive is out of scope by design.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that you cannot do today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should backpage do instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What else did you try, and why was it not enough?
+    validations:
+      required: false

@@ -1,0 +1,29 @@
+#!/bin/sh
+# The default branch only ever advances through a merged pull request.
+set -eu
+
+root=$(git rev-parse --show-toplevel)
+
+ref=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+default=${ref#origin/}
+[ -n "$default" ] || default=main
+
+while read -r _local_ref _local_sha remote_ref remote_sha; do
+	[ -n "$remote_ref" ] || continue
+	if [ "$remote_ref" = "refs/heads/$default" ]; then
+		# An all-zero remote sha means the branch does not exist yet. That is
+		# the genesis push, which has nothing to open a pull request against.
+		# Once the branch exists, every further direct push is refused, and
+		# branch protection forbids deleting it to get back to this state.
+		case "$remote_sha" in
+		*[!0]*) ;;
+		*) continue ;;
+		esac
+		printf '\033[31mpre-push\033[0m refusing to push directly to %s\n' "$default" >&2
+		printf '  %s only advances through a merged pull request\n' "$default" >&2
+		printf '  start work with: scripts/agent start <type>/<slug>\n' >&2
+		exit 1
+	fi
+done
+
+"$root/scripts/task" check
