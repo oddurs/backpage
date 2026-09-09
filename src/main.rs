@@ -7,6 +7,7 @@ mod cli;
 mod image;
 mod render;
 mod source;
+mod terminal;
 mod wallpaper;
 
 use std::path::{Path, PathBuf};
@@ -36,6 +37,9 @@ Options:
       --screen <WxH>    picture size [default: the display's resolution]
       --cols <n>        grid width [default: whatever fits]
       --rows <n>        grid height [default: whatever fits]
+      --stream          run the source's full-screen interface and draw that
+      --tty <WxH>       terminal size for --stream [default: 120x35]
+      --fallback <path> font for glyphs the main font lacks (repeatable)
       --interval <secs> repaint forever instead of once
       --stdout          print the frame rather than painting the desktop
   -h, --help            print this message
@@ -70,13 +74,35 @@ fn run(cfg: &Config, to_desktop: bool) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let renderer = match Renderer::new(&font, cli::MAX_AUTO_SIZE) {
+    // Fallbacks are optional: a missing one is not worth failing over, it just
+    // means some characters will not draw.
+    let fallbacks: Vec<Vec<u8>> = cfg
+        .fallbacks
+        .iter()
+        .filter_map(|p| std::fs::read(p).ok())
+        .collect();
+    let mut stack: Vec<&[u8]> = vec![&font];
+    stack.extend(fallbacks.iter().map(Vec::as_slice));
+
+    let renderer = match Renderer::with_fallbacks(&stack, cli::MAX_AUTO_SIZE) {
         Ok(r) => r,
         Err(err) => {
             eprintln!("backpage: {} is not a usable font: {err}", cfg.font);
             eprintln!("  TrueType collections (.ttc) are not supported; use a .ttf or .otf");
             return ExitCode::FAILURE;
         }
+    };
+
+    let session = if cfg.stream {
+        match terminal::Session::spawn(&cfg.source, cfg.tty.0, cfg.tty.1) {
+            Ok(s) => Some(s),
+            Err(err) => {
+                eprintln!("backpage: {err}");
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        None
     };
 
     if to_desktop {
@@ -90,7 +116,7 @@ fn run(cfg: &Config, to_desktop: bool) -> ExitCode {
 
     let mut tick: u32 = 0;
     loop {
-        let result = once(cfg, &renderer, to_desktop, tick);
+        let result = once(cfg, &renderer, session.as_ref(), to_desktop, tick);
 
         let Some(secs) = cfg.interval else {
             return match result {
@@ -119,9 +145,14 @@ fn run(cfg: &Config, to_desktop: bool) -> ExitCode {
 fn once(
     cfg: &Config,
     renderer: &Renderer<'_>,
+    session: Option<&terminal::Session>,
     to_desktop: bool,
     tick: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(session) = session {
+        return stream_once(cfg, renderer, session, to_desktop, tick);
+    }
+
     let sample = source::read(&cfg.source)?;
     let panels = panels(&sample);
 
@@ -172,6 +203,49 @@ fn frame_path(tick: u32) -> PathBuf {
         |home| Path::new(&home).join("Library/Caches/backpage"),
     );
     base.join(format!("frame-{}.png", tick % 2))
+}
+
+/// Draws whatever the streamed program currently has on its screen.
+fn stream_once(
+    cfg: &Config,
+    renderer: &Renderer<'_>,
+    session: &terminal::Session,
+    to_desktop: bool,
+    tick: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (cols, rows) = session.size();
+    let cells = session.screen(cfg.fg, cfg.bg)?;
+
+    if !to_desktop {
+        for row in 0..rows {
+            let line: String = (0..cols)
+                .filter_map(|c| cells.get(row * cols + c).map(|x| x.ch))
+                .collect();
+            println!("{}", line.trim_end());
+        }
+        return Ok(());
+    }
+
+    let (width, height) = match cfg.screen {
+        Some(s) => s,
+        None => wallpaper::screen_size()?,
+    };
+    let usable = |px: u32| f32::from(u16::try_from(px.saturating_sub(cfg.margin * 2)).unwrap_or(1));
+    let size = cfg
+        .size
+        .unwrap_or_else(|| renderer.fit(cols, rows, usable(width), usable(height)));
+    let renderer = renderer.resized(size);
+
+    let (text_w, text_h) = renderer.extent(cols, rows);
+    let centre =
+        |total: u32, text: f32| (f32::from(u16::try_from(total).unwrap_or(1)) - text) / 2.0;
+    let origin = (centre(width, text_w), centre(height, text_h));
+
+    let buf = renderer.draw_cells(&cells, cols, width, height, origin, cfg.bg);
+    let path = frame_path(tick);
+    image::write_png(&path, width, height, &buf)?;
+    wallpaper::set(&path)?;
+    Ok(())
 }
 
 /// The grid a set of panels needs, with nothing padded or truncated.

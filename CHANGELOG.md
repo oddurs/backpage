@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--stdout`, `--source`, `--font`, `--size`, `--margin`, `--bg`, `--fg`,
   `--screen`, `--cols`, `--rows`.
 
+- `--stream`, which runs the source's full-screen interface on a
+  pseudo-terminal and draws its screen, with truecolor and the 256-colour
+  palette resolved per cell.
+- Font fallback, so characters the primary font lacks — notably the braille
+  block poptop's graphs are drawn with — are taken from another font.
+- Per-cell background colours, so highlighted and inverse-video cells read the
+  way they do in a terminal.
+
 ### Changed
 
 - `--width`/`--height` are now `--cols`/`--rows`, since the picture has pixel

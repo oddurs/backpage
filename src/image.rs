@@ -19,6 +19,10 @@ use ab_glyph::{Font, FontRef, PxScale, ScaleFont, point};
 /// Bytes per pixel in the buffers this module produces.
 const CHANNELS: usize = 3;
 
+/// Fraction of a cell a fallback glyph is scaled to occupy. Slightly under one
+/// so a glyph does not bleed into the neighbouring column.
+const FALLBACK_FILL: f32 = 0.95;
+
 /// An 8-bit RGB colour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rgb(pub u8, pub u8, pub u8);
@@ -47,6 +51,29 @@ impl Rgb {
     }
 }
 
+/// One character cell with its colours.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cell {
+    /// The character to draw.
+    pub ch: char,
+    /// Foreground colour.
+    pub fg: Rgb,
+    /// Background colour.
+    pub bg: Rgb,
+}
+
+impl Cell {
+    /// A blank cell in the given background.
+    #[must_use]
+    pub fn blank(bg: Rgb) -> Self {
+        Self {
+            ch: ' ',
+            fg: bg,
+            bg,
+        }
+    }
+}
+
 /// Cell metrics for a monospace font at a fixed size.
 #[derive(Debug, Clone, Copy)]
 pub struct Metrics {
@@ -58,31 +85,90 @@ pub struct Metrics {
     pub ascent: f32,
 }
 
-/// A font loaded at a fixed pixel size.
+/// A stack of fonts at a fixed pixel size.
+///
+/// The first font decides the cell metrics. Later fonts are fallbacks, used
+/// only for characters the earlier ones do not carry — on macOS the braille
+/// block that terminal graphs are drawn with lives in no monospace font, so
+/// drawing poptop's timeline needs one.
 pub struct Renderer<'a> {
-    font: FontRef<'a>,
+    fonts: Vec<FontRef<'a>>,
+    /// Per-font pixel scale. Fallbacks are scaled so their advance matches the
+    /// primary cell, since they are not designed to the same em.
+    scales: Vec<PxScale>,
     scale: PxScale,
 }
 
 impl<'a> Renderer<'a> {
-    /// Loads a font from its raw bytes.
+    /// Loads a primary font plus fallbacks, in order of preference.
+    ///
+    /// The first font decides the cell metrics; later ones are consulted only
+    /// for characters the earlier ones lack. Each fallback is scaled so one of
+    /// its glyphs occupies a cell, since it is not drawn to the same em.
     ///
     /// # Errors
     ///
-    /// Returns an error if the bytes are not a font this crate can parse.
-    /// TrueType collections (`.ttc`) are not supported; use a `.ttf` or `.otf`.
-    pub fn new(bytes: &'a [u8], size: f32) -> Result<Self, ab_glyph::InvalidFont> {
+    /// Returns an error if `fonts` is empty or an entry cannot be parsed.
+    pub fn with_fallbacks(fonts: &[&'a [u8]], size: f32) -> Result<Self, ab_glyph::InvalidFont> {
+        let parsed: Vec<FontRef<'a>> = fonts
+            .iter()
+            .map(|b| FontRef::try_from_slice(b))
+            .collect::<Result<_, _>>()?;
+        let primary = parsed.first().ok_or(ab_glyph::InvalidFont)?;
+        let scale = PxScale::from(size);
+        let cell_w = primary.as_scaled(scale).h_advance(primary.glyph_id('M'));
+
+        // A fallback is normalised by the *drawn* size of a representative
+        // glyph, not its advance: Apple Braille advances a full cell but draws
+        // a small dot cluster, so matching advances leaves braille tiny.
+        let scales = parsed
+            .iter()
+            .enumerate()
+            .map(|(i, font)| {
+                if i == 0 {
+                    return scale;
+                }
+                let probe = ['\u{28ff}', 'M', '\u{2800}']
+                    .into_iter()
+                    .find(|&c| font.glyph_id(c).0 != 0)
+                    .unwrap_or('M');
+                let glyph = font
+                    .glyph_id(probe)
+                    .with_scale_and_position(scale, point(0.0, 0.0));
+                let drawn = font
+                    .outline_glyph(glyph)
+                    .map_or(0.0, |o| o.px_bounds().max.x - o.px_bounds().min.x);
+                if drawn > 0.0 {
+                    PxScale::from(size * (cell_w * FALLBACK_FILL / drawn))
+                } else {
+                    scale
+                }
+            })
+            .collect();
+
         Ok(Self {
-            font: FontRef::try_from_slice(bytes)?,
-            scale: PxScale::from(size),
+            fonts: parsed,
+            scales,
+            scale,
         })
     }
 
-    /// The same font at a different pixel size.
+    /// Index of the first font carrying `ch`, if any.
+    fn font_for(&self, ch: char) -> Option<usize> {
+        self.fonts.iter().position(|f| f.glyph_id(ch).0 != 0)
+    }
+
+    /// The same font stack at a different pixel size.
     #[must_use]
     pub fn resized(&self, size: f32) -> Self {
+        let ratio = size / self.scale.y;
         Self {
-            font: self.font.clone(),
+            fonts: self.fonts.clone(),
+            scales: self
+                .scales
+                .iter()
+                .map(|s| PxScale::from(s.y * ratio))
+                .collect(),
             scale: PxScale::from(size),
         }
     }
@@ -112,28 +198,29 @@ impl<'a> Renderer<'a> {
     /// Cell metrics at the configured size.
     #[must_use]
     pub fn metrics(&self) -> Metrics {
-        let scaled = self.font.as_scaled(self.scale);
+        let primary = &self.fonts[0];
+        let scaled = primary.as_scaled(self.scale);
         Metrics {
-            cell_w: scaled.h_advance(self.font.glyph_id('M')),
+            cell_w: scaled.h_advance(primary.glyph_id('M')),
             line_h: scaled.height() + scaled.line_gap(),
             ascent: scaled.ascent(),
         }
     }
 
-    /// Draws `text` onto a `width` x `height` RGB buffer.
+    /// Draws a grid of styled cells onto a `width` x `height` RGB buffer.
     ///
-    /// Lines are laid out on the monospace grid from `origin`, the top-left of
-    /// the text block in pixels.
-    /// Anything that would fall outside the buffer is clipped.
+    /// Cell backgrounds are painted first, then glyphs, so a cell that differs
+    /// from the page background reads as a block the way it does in a terminal.
+    /// Anything outside the buffer is clipped.
     #[must_use]
-    pub fn draw(
+    pub fn draw_cells(
         &self,
-        text: &str,
+        cells: &[Cell],
+        cols: usize,
         width: u32,
         height: u32,
         origin: (f32, f32),
         bg: Rgb,
-        fg: Rgb,
     ) -> Vec<u8> {
         let (w, h) = (width as usize, height as usize);
         let mut buf = Vec::with_capacity(w * h * CHANNELS);
@@ -142,32 +229,66 @@ impl<'a> Renderer<'a> {
         }
 
         let m = self.metrics();
-        let (origin_x, origin_y) = origin;
+        let (ox, oy) = origin;
+        let rows = if cols == 0 {
+            0
+        } else {
+            cells.len().div_ceil(cols)
+        };
 
-        for (row, line) in text.lines().enumerate() {
-            let baseline = origin_y + m.ascent + row as f32 * m.line_h;
+        for row in 0..rows {
+            let y0 = oy + row as f32 * m.line_h;
+            for col in 0..cols {
+                let Some(cell) = cells.get(row * cols + col) else {
+                    continue;
+                };
+                if cell.bg != bg {
+                    let x0 = ox + col as f32 * m.cell_w;
+                    fill(&mut buf, (w, h), (x0, y0, m.cell_w, m.line_h), cell.bg);
+                }
+            }
+        }
+
+        for row in 0..rows {
+            let baseline = oy + m.ascent + row as f32 * m.line_h;
             if baseline - m.ascent > height as f32 {
                 break;
             }
-            for (col, ch) in line.chars().enumerate() {
-                if ch == ' ' {
+            for col in 0..cols {
+                let Some(cell) = cells.get(row * cols + col) else {
+                    continue;
+                };
+                if cell.ch == ' ' || cell.ch == '\0' {
                     continue;
                 }
-                let x = origin_x + col as f32 * m.cell_w;
+                let x = ox + col as f32 * m.cell_w;
                 if x > width as f32 {
                     break;
                 }
-                let glyph = self
-                    .font
-                    .glyph_id(ch)
-                    .with_scale_and_position(self.scale, point(x, baseline));
-                let Some(outline) = self.font.outline_glyph(glyph) else {
+                let Some(fi) = self.font_for(cell.ch) else {
+                    continue;
+                };
+                let font = &self.fonts[fi];
+                let glyph = font
+                    .glyph_id(cell.ch)
+                    .with_scale_and_position(self.scales[fi], point(x, baseline));
+                let Some(outline) = font.outline_glyph(glyph) else {
                     continue;
                 };
                 let bounds = outline.px_bounds();
+                // A fallback font is not drawn to the primary's baseline, so
+                // centre its glyph in the cell instead. That is where a
+                // terminal puts braille, and it is what the graphs assume.
+                let dy = if fi == 0 {
+                    0.0
+                } else {
+                    (oy + row as f32 * m.line_h + m.line_h / 2.0)
+                        - f32::midpoint(bounds.min.y, bounds.max.y)
+                };
+                let fg = cell.fg;
                 outline.draw(|gx, gy, coverage| {
                     let px = bounds.min.x + gx as f32;
-                    let py = bounds.min.y + gy as f32;
+                    let py = bounds.min.y + gy as f32 + dy;
                     if px < 0.0 || py < 0.0 || px >= width as f32 || py >= height as f32 {
                         return;
                     }
@@ -182,6 +303,51 @@ impl<'a> Renderer<'a> {
         }
 
         buf
+    }
+
+    /// Draws plain `text` in a single colour.
+    #[must_use]
+    pub fn draw(
+        &self,
+        text: &str,
+        width: u32,
+        height: u32,
+        origin: (f32, f32),
+        bg: Rgb,
+        fg: Rgb,
+    ) -> Vec<u8> {
+        let lines: Vec<&str> = text.lines().collect();
+        let cols = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0);
+        let mut cells = Vec::with_capacity(cols * lines.len());
+        for line in &lines {
+            let mut n = 0;
+            for ch in line.chars() {
+                cells.push(Cell { ch, fg, bg });
+                n += 1;
+            }
+            for _ in n..cols {
+                cells.push(Cell::blank(bg));
+            }
+        }
+        self.draw_cells(&cells, cols, width, height, origin, bg)
+    }
+}
+
+/// Paints an axis-aligned rectangle, clipped to the buffer.
+fn fill(buf: &mut [u8], size: (usize, usize), rect: (f32, f32, f32, f32), colour: Rgb) {
+    let (buf_w, buf_h) = size;
+    let (left, top, rect_w, rect_h) = rect;
+    let x0 = left.max(0.0) as usize;
+    let y0 = top.max(0.0) as usize;
+    let x1 = ((left + rect_w).max(0.0) as usize).min(buf_w);
+    let y1 = ((top + rect_h).max(0.0) as usize).min(buf_h);
+    for py in y0..y1 {
+        for px in x0..x1 {
+            let idx = (py * buf_w + px) * CHANNELS;
+            buf[idx] = colour.0;
+            buf[idx + 1] = colour.1;
+            buf[idx + 2] = colour.2;
+        }
     }
 }
 
@@ -221,7 +387,7 @@ mod tests {
     const FONT: &str = "/System/Library/Fonts/SFNSMono.ttf";
 
     fn renderer(bytes: &[u8]) -> Renderer<'_> {
-        Renderer::new(bytes, 24.0).expect("SF Mono should parse")
+        Renderer::with_fallbacks(&[bytes], 24.0).expect("SF Mono should parse")
     }
 
     #[test]
@@ -255,7 +421,7 @@ mod tests {
 
     #[test]
     fn font_loading_rejects_things_that_are_not_fonts() {
-        assert!(Renderer::new(b"not a font", 24.0).is_err());
+        assert!(Renderer::with_fallbacks(&[b"not a font"], 24.0).is_err());
     }
 
     // The remaining tests need the system font, which exists only on macOS.

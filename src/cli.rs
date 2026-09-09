@@ -23,6 +23,18 @@ pub const DEFAULT_MARGIN: u32 = 96;
 /// Default program consulted for a sample.
 pub const DEFAULT_SOURCE: &str = "poptop";
 
+/// Default pseudo-terminal size used by `--stream`.
+pub const DEFAULT_TTY: (u16, u16) = (120, 35);
+
+/// Fonts consulted for characters the primary font lacks.
+///
+/// No monospace font on macOS carries the braille block that terminal graphs
+/// are drawn with; these do, and the system ships both.
+pub const DEFAULT_FALLBACKS: [&str; 2] = [
+    "/System/Library/Fonts/Apple Braille.ttf",
+    "/System/Library/Fonts/Apple Symbols.ttf",
+];
+
 /// How the dashboard should be produced.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Config {
@@ -44,6 +56,13 @@ pub struct Config {
     pub screen: Option<(u32, u32)>,
     /// Seconds between refreshes; `None` renders once and exits.
     pub interval: Option<u64>,
+    /// Run the source's full-screen interface and draw that, rather than
+    /// asking it for one plain-text sample.
+    pub stream: bool,
+    /// Pseudo-terminal size used by `stream`.
+    pub tty: (u16, u16),
+    /// Fonts consulted for characters the primary font lacks.
+    pub fallbacks: Vec<String>,
 }
 
 impl Default for Config {
@@ -58,6 +77,9 @@ impl Default for Config {
             grid: None,
             screen: None,
             interval: None,
+            stream: false,
+            tty: DEFAULT_TTY,
+            fallbacks: DEFAULT_FALLBACKS.iter().map(|s| (*s).to_string()).collect(),
         }
     }
 }
@@ -119,6 +141,7 @@ where
     let mut cols = DEFAULT_COLS;
     let mut rows = DEFAULT_ROWS;
     let mut grid_set = false;
+    let mut replaced_fallbacks = false;
     let mut args = args.into_iter();
 
     while let Some(arg) = args.next() {
@@ -126,6 +149,21 @@ where
             "-h" | "--help" => return Ok(Command::Help),
             "-V" | "--version" => return Ok(Command::Version),
             "--stdout" => to_stdout = true,
+            "--stream" => cfg.stream = true,
+            "--tty" => {
+                let (w, h) = dimensions(&mut args, "--tty")?;
+                cfg.tty = (
+                    u16::try_from(w).unwrap_or(u16::MAX),
+                    u16::try_from(h).unwrap_or(u16::MAX),
+                );
+            }
+            "--fallback" => {
+                if !replaced_fallbacks {
+                    cfg.fallbacks.clear();
+                    replaced_fallbacks = true;
+                }
+                cfg.fallbacks.push(text(&mut args, "--fallback")?);
+            }
             "--source" => cfg.source = text(&mut args, "--source")?,
             "--font" => cfg.font = text(&mut args, "--font")?,
             "--size" => cfg.size = Some(positive_float(&mut args, "--size")?),
@@ -312,6 +350,32 @@ mod tests {
     fn an_interval_turns_it_into_a_loop() {
         assert_eq!(config(&["--interval", "5"]).interval, Some(5));
         assert_eq!(config(&[]).interval, None);
+    }
+
+    #[test]
+    fn streaming_is_opt_in() {
+        assert!(!config(&[]).stream);
+        assert!(config(&["--stream"]).stream);
+    }
+
+    #[test]
+    fn the_terminal_size_can_be_set() {
+        assert_eq!(config(&["--tty", "200x60"]).tty, (200, 60));
+        assert_eq!(config(&[]).tty, DEFAULT_TTY);
+    }
+
+    #[test]
+    fn fallback_fonts_default_to_the_system_ones() {
+        assert_eq!(config(&[]).fallbacks.len(), DEFAULT_FALLBACKS.len());
+    }
+
+    #[test]
+    fn given_fallbacks_replace_the_defaults_rather_than_adding_to_them() {
+        let c = config(&["--fallback", "/a.ttf", "--fallback", "/b.ttf"]);
+        assert_eq!(
+            c.fallbacks,
+            vec!["/a.ttf".to_string(), "/b.ttf".to_string()]
+        );
     }
 
     #[test]
