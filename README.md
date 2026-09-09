@@ -16,6 +16,8 @@ Early, but it does the thing. What works today:
 
 - Reading a sample from [poptop](https://github.com/oddurs/poptop) via its
   `--once` mode, dropping the figures the platform does not publish.
+- `--stream`: running poptop's actual full-screen interface on a pseudo-terminal
+  and drawing that instead — the timeline graphs, the colours, the real header.
 - Composing that into panels, rasterising them to a PNG with a system
   monospace font, and setting it as the desktop picture.
 - Sizing the type to fill the display and centring the result, so the dashboard
@@ -25,6 +27,10 @@ Early, but it does the thing. What works today:
 What does not exist yet:
 
 - Any data source other than poptop.
+- Animation. A desktop picture is a static image; `--interval` repaints it, and
+  a repaint costs roughly 400ms, so the practical floor is a second or two.
+  Smooth motion would need a window at desktop level, which is a different
+  program.
 - Multi-display and per-space pictures — every desktop gets the same picture.
 - A config file. Everything is flags.
 
@@ -57,10 +63,24 @@ cargo install --path .
 
 ```sh
 backpage                      # paint the desktop once and exit
+backpage --stream             # draw poptop's real interface, not a plain sample
 backpage --interval 10        # repaint every 10 seconds
 backpage --stdout             # print the frame instead of painting
 backpage --help
 ```
+
+### Two ways to draw
+
+Without `--stream`, backpage runs `poptop --once` and composes the plain-text
+figures into its own panels. With `--stream`, it runs poptop itself on a
+pseudo-terminal at `--tty` size and draws whatever poptop puts on that screen,
+colours included. The second is closer to what you would see in a terminal, and
+it is cheaper per repaint because poptop stays running instead of being
+restarted for every frame.
+
+Braille is the catch: poptop draws its timeline with the braille block, and no
+monospace font on macOS carries those glyphs. backpage falls back to Apple
+Braille, which the system ships — `--fallback` overrides the chain.
 
 `--stdout` is the quickest way to see what will be drawn:
 
